@@ -1,9 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import * as RNFS from 'react-native-fs';
-import { Camera, CameraPosition, useCameraDevice, useCameraFormat } from 'react-native-vision-camera'; // <--- IMPORTANTE: Agregamos useCameraFormat
+import {
+  Camera,
+  CameraPosition,
+  runAtTargetFps,
+  useCameraDevice,
+  useCameraFormat,
+  useFrameProcessor,
+  VisionCameraProxy
+} from 'react-native-vision-camera';
+import { useSharedValue, Worklets } from 'react-native-worklets-core';
 
-// ⚠️ IMPORTANTE: TU IP
+// ⚠️ TU IP
 const PC_IP = '192.168.1.2';
 const PORT = 5000;
 
@@ -12,6 +20,9 @@ type Command =
   | { type: 'FLIP'; value: CameraPosition }
   | { type: 'VIDEO_TOGGLE'; value: boolean }
   | { type: 'ZOOM'; value: number };
+
+// 1. Inicializamos el plugin nativo (Kotlin) fuera del componente
+const plugin = VisionCameraProxy.initFrameProcessorPlugin('getBase64');
 
 export default function WebcamApp() {
   const [cameraPosition, setCameraPosition] = useState<CameraPosition>('back');
@@ -22,68 +33,34 @@ export default function WebcamApp() {
 
   const device = useCameraDevice(cameraPosition);
 
-  // --- NUEVO: BUSCAR FORMATO 720p a 60FPS ---
-  // Esto hace que la cámara funcione nativamente en HD, no en 4K
+  // Buscamos 720p a 30fps (Estabilidad > Resolución extrema)
   const format = useCameraFormat(device, [
     { videoResolution: { width: 1280, height: 720 } },
-    { fps: 60 }
+    { fps: 30 }
   ]);
 
+  // SharedValue permite que el hilo de UI y el hilo de la Cámara se comuniquen
+  const isConnected = useSharedValue(false);
   const ws = useRef<WebSocket | null>(null);
-  const camera = useRef<Camera>(null);
 
   useEffect(() => {
     (async () => {
       const status = await Camera.requestCameraPermission();
       setHasPermission(status === 'granted');
     })();
+
     connectWebSocket();
     return () => { ws.current?.close(); };
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-    const startStreaming = async () => {
-      if (!isMounted || !isActive || !camera.current || !ws.current || ws.current.readyState !== WebSocket.OPEN) {
-        if (isMounted && isActive) setTimeout(startStreaming, 50); // Bajamos espera a 50ms para más fluidez
-        return;
-      }
-
-      try {
-        const photo = await camera.current.takePhoto({
-          qualityPrioritization: 'speed',
-          flash: 'off',
-          enableShutterSound: false,
-          quality: 85, // Calidad JPEG
-          skipMetadata: true
-        });
-
-        const base64 = await RNFS.readFile(photo.path, 'base64');
-
-        if (ws.current.readyState === WebSocket.OPEN) {
-          ws.current.send(base64);
-        }
-        await RNFS.unlink(photo.path);
-
-      } catch (e) {
-        console.log("Error en stream:", e);
-      }
-
-      if (isMounted && isActive) {
-        // requestAnimationFrame intenta ir a los fps de la pantalla (60fps)
-        requestAnimationFrame(startStreaming);
-      }
-    };
-
-    if (isActive) startStreaming();
-    return () => { isMounted = false; };
-  }, [isActive]);
-
   const connectWebSocket = () => {
-    console.log(`Intentando conectar a ws://${PC_IP}:${PORT}...`);
+    console.log(`Conectando a ws://${PC_IP}:${PORT}...`);
     ws.current = new WebSocket(`ws://${PC_IP}:${PORT}`);
 
-    ws.current.onopen = () => console.log("✅ Conectado a la PC");
+    ws.current.onopen = () => {
+      console.log("✅ Conectado");
+      isConnected.value = true; // Avisamos al Frame Processor que puede enviar
+    };
 
     ws.current.onmessage = (e) => {
       try {
@@ -98,8 +75,42 @@ export default function WebcamApp() {
       } catch (err) { }
     };
 
-    ws.current.onclose = () => setTimeout(connectWebSocket, 2000);
+    ws.current.onclose = () => {
+      console.log("❌ Desconectado");
+      isConnected.value = false; // Frenamos el envío
+      setTimeout(connectWebSocket, 1000);
+    };
+
+    ws.current.onerror = () => {
+      isConnected.value = false;
+    };
   };
+
+  // --- FUNCIÓN PUENTE (Worklet -> JS) ---
+  // El socket vive en JS, el procesador en Worklet. Esto los une.
+  const sendFrameToSocket = Worklets.createRunOnJS((base64: string) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      ws.current.send(base64);
+    }
+  });
+
+  // --- EL MOTOR DE ALTO RENDIMIENTO (Frame Processor) ---
+  const frameProcessor = useFrameProcessor((frame) => {
+    'worklet';
+    if (!isConnected.value) return;
+
+    // Limitamos a 20 FPS para no saturar el Wi-Fi (ajustable)
+    runAtTargetFps(20, () => {
+      if (plugin == null) return;
+
+      // Llamada directa a KOTLIN (Cero disco duro, todo RAM)
+      const base64 = plugin.call(frame) as string;
+
+      if (base64) {
+        sendFrameToSocket(base64);
+      }
+    });
+  }, []);
 
   if (!hasPermission || device == null) return <ActivityIndicator size="large" style={styles.center} />;
 
@@ -107,15 +118,15 @@ export default function WebcamApp() {
     <View style={styles.container}>
       {isActive ? (
         <Camera
-          ref={camera}
           style={StyleSheet.absoluteFill}
           device={device}
-          format={format} // <--- AQUI APLICAMOS EL FORMATO OPTIMIZADO
+          format={format}
           isActive={isActive}
           torch={flash}
           zoom={zoom}
-          photo={true}
-          video={false}
+          // pixelFormat="yuv" es vital para que el plugin de Kotlin funcione rápido
+          pixelFormat="yuv"
+          frameProcessor={frameProcessor} // <--- AQUÍ OCURRE LA MAGIA
           enableZoomGesture={true}
         />
       ) : (
@@ -126,10 +137,10 @@ export default function WebcamApp() {
 
       <View style={styles.overlay}>
         <Text style={styles.overlayText}>
-          {isActive ? `🟢 ONLINE` : "🔴 OFFLINE"}
+          {isActive && isConnected.value ? `⚡ ONLINE (NATIVE)` : "🔴 OFFLINE"}
         </Text>
         <Text style={styles.overlaySubText}>
-          {format?.videoWidth}x{format?.videoHeight} @ {Math.round(format?.maxFps || 0)} FPS
+          {format?.videoWidth}x{format?.videoHeight}
         </Text>
       </View>
     </View>
