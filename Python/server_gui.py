@@ -9,131 +9,183 @@ import cv2
 import numpy as np
 import queue
 from PIL import Image, ImageTk
+import socket
+import webbrowser
 
 # --- CONFIGURACIÓN ---
 PORT = 5000
-frame_queue = queue.Queue(maxsize=2)
+frame_queue = queue.Queue(maxsize=1)
+
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
 
 class WebcamControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("WebcamPro - Centro de Mando")
-        self.root.geometry("1000x800")
+        self.root.title("WebcamPro")
+        
+        # 1. FORMATO VERTICAL (TIPO CELULAR)
+        # 550px ancho x 950px alto
+        self.root.geometry("400x600") 
         self.root.configure(bg="#121212")
 
-        # Variables de Estado
+        # Estado
         self.flash_on = False
         self.camera_front = False 
         self.video_active = True
         self.mic_active = True
-        self.loop = None
+        self.rotation_index = 0
+        self.battery_level = "--"
         self.connected_client = None
-        
-        # Estado de Rotación (0=0°, 1=90°, 2=180°, 3=270°)
-        self.rotation_index = 0 
+        self.loop = None
+        self.local_ip = get_local_ip()
 
-        # Construir Interfaz
         self.create_interface()
         
-        # Hilos
         self.server_thread = threading.Thread(target=self.start_server_thread, daemon=True)
         self.server_thread.start()
 
-        # Inicio Loop GUI
         self.update_video_frame()
 
     def create_interface(self):
-        # --- 1. PANEL DE CONTROL (Fijo Abajo) ---
-        self.control_frame = tk.Frame(self.root, bg="#1f1f1f", height=150) # Aumentamos un poco la altura para comodidad
+        # --- 1. PANEL DE CONTROL (FIJO ABAJO) ---
+        # Aumentamos altura para que quepan todos los botones y el de X
+        self.control_frame = tk.Frame(self.root, bg="#1f1f1f", height=240) 
         self.control_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        self.control_frame.pack_propagate(False)
+        self.control_frame.pack_propagate(False) 
 
-        self.status_label = tk.Label(self.control_frame, text="Estado: ESPERANDO...", bg="#1f1f1f", fg="orange", font=("Segoe UI", 10, "bold"))
-        self.status_label.pack(side=tk.TOP, pady=5)
-
-        btns_container = tk.Frame(self.control_frame, bg="#1f1f1f")
-        btns_container.pack(expand=True)
-
-        # Fila 1: Controles Básicos
-        self.btn_video = self.create_btn(btns_container, "Apagar Cámara", self.toggle_video, "#d32f2f", 0, 0)
-        self.btn_mic = self.create_btn(btns_container, "Mute Mic", self.toggle_mic, "#d32f2f", 0, 1)
-        self.btn_flash = self.create_btn(btns_container, "Flash: OFF", self.toggle_flash, "#0288d1", 0, 2)
-        self.btn_flip = self.create_btn(btns_container, "Girar Cámara", self.toggle_camera, "#fbc02d", 0, 3)
+        # --- 2. HEADER (ARRIBA) ---
+        header_frame = tk.Frame(self.root, bg="#121212")
+        header_frame.pack(side=tk.TOP, fill=tk.X, pady=10, padx=10)
         
-        # NUEVO BOTÓN: Rotar 90 Grados
-        self.btn_rotate = self.create_btn(btns_container, "Rotar 90°", self.rotate_view, "#8e44ad", 0, 4)
+        # Info IP (Izquierda)
+        ip_frame = tk.Frame(header_frame, bg="#121212")
+        ip_frame.pack(side=tk.LEFT)
+        tk.Label(ip_frame, text="Tu IP:", bg="#121212", fg="#666", font=("Segoe UI", 8)).pack(anchor="w")
+        tk.Label(ip_frame, text=f"{self.local_ip}", bg="#121212", fg="#00ff00", font=("Segoe UI", 16, "bold")).pack(anchor="w")
 
-        # Fila 2: Zoom
+        # BOTÓN DONACIONES (Derecha) + Animación
+        self.btn_donate = tk.Button(header_frame, text="♥ Donaciones", bg="#e91e63", fg="white", 
+                                    font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                                    command=lambda: webbrowser.open("https://paypal.me/lugomartin"))
+        self.btn_donate.pack(side=tk.RIGHT, pady=5)
+        
+        # Animación Hover (Simple pero efectiva)
+        self.btn_donate.bind("<Enter>", lambda e: self.btn_donate.config(bg="#ff4081")) # Color más claro al pasar mouse
+        self.btn_donate.bind("<Leave>", lambda e: self.btn_donate.config(bg="#e91e63")) # Color original al salir
+
+        # --- 3. AREA DE VIDEO (RESTO) ---
+        self.video_container = tk.Frame(self.root, bg="black", bd=1, relief="solid")
+        self.video_container.pack(side=tk.TOP, expand=True, fill="both", padx=10, pady=(0, 10))
+        
+        self.video_label = tk.Label(self.video_container, text="[ CONECTANDO... ]", bg="black", fg="#333", font=("Segoe UI", 12))
+        self.video_label.pack(expand=True, fill="both")
+
+        # --- CONTENIDO DEL PANEL DE CONTROL ---
+        
+        # Status Bar
+        status_frame = tk.Frame(self.control_frame, bg="#1f1f1f")
+        status_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=5)
+        self.status_label = tk.Label(status_frame, text="● DESCONECTADO", bg="#1f1f1f", fg="red", font=("Segoe UI", 9, "bold"))
+        self.status_label.pack(side=tk.LEFT)
+        self.battery_label = tk.Label(status_frame, text="Batería: --%", bg="#1f1f1f", fg="#888", font=("Segoe UI", 9))
+        self.battery_label.pack(side=tk.RIGHT)
+
+        # Contenedor de Botones (Grid 2x2 para formato vertical)
+        btns_container = tk.Frame(self.control_frame, bg="#1f1f1f")
+        btns_container.pack(expand=True, fill=tk.X, padx=20)
+
+        self.btn_video = self.create_btn(btns_container, "Cámara", self.toggle_video, "#d32f2f", 0, 0)
+        self.btn_mic = self.create_btn(btns_container, "Micrófono", self.toggle_mic, "#d32f2f", 0, 1)
+        self.btn_flash = self.create_btn(btns_container, "Flash", self.toggle_flash, "#0288d1", 1, 0)
+        self.btn_rotate = self.create_btn(btns_container, "Rotar 90°", self.rotate_view, "#8e44ad", 1, 1)
+        # El botón de girar (Flip) lo muevo a una fila pequeña o lo quito si no entra, 
+        # pero en vertical entra bien como fila 3 o junto al zoom. Lo pongo fila 2, col 0.
+        self.btn_flip = self.create_btn(btns_container, "Frontal/Trasera", self.toggle_camera, "#fbc02d", 2, 0, colspan=2)
+
+        # Zoom
         zoom_frame = tk.Frame(self.control_frame, bg="#1f1f1f")
-        zoom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=50, pady=10)
-        tk.Label(zoom_frame, text="Zoom:", bg="#1f1f1f", fg="#cccccc").pack(side=tk.LEFT)
+        zoom_frame.pack(side=tk.TOP, fill=tk.X, padx=30, pady=5)
+        tk.Label(zoom_frame, text="🔍", bg="#1f1f1f", fg="white").pack(side=tk.LEFT)
         self.zoom_slider = tk.Scale(zoom_frame, from_=1.0, to=5.0, orient=tk.HORIZONTAL, resolution=0.1, 
-                                    bg="#1f1f1f", fg="white", highlightthickness=0, command=self.send_zoom, troughcolor="#444444")
+                                    bg="#1f1f1f", fg="white", highlightthickness=0, command=self.send_zoom, troughcolor="#444", showvalue=0)
         self.zoom_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
-        # --- 2. AREA DE VIDEO ---
-        self.video_container = tk.Frame(self.root, bg="black")
-        self.video_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        # BOTÓN X (Twitter) - AL FINAL
+        btn_x = tk.Button(self.control_frame, text="Seguir en 𝕏", bg="black", fg="white", 
+                          font=("Segoe UI", 9, "bold"), relief="flat", cursor="hand2", bd=0,
+                          command=lambda: webbrowser.open("https://x.com/luuguin"))
+        btn_x.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
 
-        self.video_label = tk.Label(self.video_container, text="[ SIN SEÑAL ]", bg="black", fg="#444444", font=("Segoe UI", 20))
-        self.video_label.pack(expand=True, fill=tk.BOTH)
+        # Configuración de columnas para que se expandan
+        btns_container.columnconfigure(0, weight=1)
+        btns_container.columnconfigure(1, weight=1)
 
-    def create_btn(self, parent, text, command, color, r, c):
+    def create_btn(self, parent, text, command, color, r, c, colspan=1):
         btn = tk.Button(parent, text=text, bg=color, fg="white", font=("Segoe UI", 9, "bold"), 
-                        command=command, relief="flat", padx=15, pady=8, cursor="hand2")
-        btn.grid(row=r, column=c, padx=5, pady=5)
+                        command=command, relief="flat", pady=6, cursor="hand2")
+        btn.grid(row=r, column=c, padx=5, pady=3, sticky="ew", columnspan=colspan)
         return btn
 
-    # --- HILO PRINCIPAL (GUI) ---
     def update_video_frame(self):
-        try:
-            frame = None
+        if not self.video_active:
+            self.video_label.configure(image="", text="🎙\nMODO MICRÓFONO", fg="#00ff00", font=("Segoe UI", 16, "bold"))
             while not frame_queue.empty():
-                frame = frame_queue.get_nowait()
-            
-            if frame is not None:
-                # 1. APLICAR ROTACIÓN (Nuevo paso)
-                if self.rotation_index == 1:
-                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-                elif self.rotation_index == 2:
-                    frame = cv2.rotate(frame, cv2.ROTATE_180)
-                elif self.rotation_index == 3:
-                    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                try: frame_queue.get_nowait()
+                except: pass
+        else:
+            try:
+                frame = None
+                while not frame_queue.empty():
+                    frame = frame_queue.get_nowait()
                 
-                # 2. Obtener tamaño ventana
-                target_w = self.video_container.winfo_width()
-                target_h = self.video_container.winfo_height()
-
-                if target_w > 10 and target_h > 10:
-                    # Calcular aspect ratio para no deformar (opcional, aquí hacemos 'contain')
-                    h, w = frame.shape[:2]
-                    scale = min(target_w/w, target_h/h)
-                    new_w, new_h = int(w * scale), int(h * scale)
+                if frame is not None:
+                    # Rotaciones
+                    if self.rotation_index == 1: frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                    elif self.rotation_index == 2: frame = cv2.rotate(frame, cv2.ROTATE_180)
+                    elif self.rotation_index == 3: frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
                     
-                    frame_resized = cv2.resize(frame, (new_w, new_h))
+                    target_w = self.video_container.winfo_width()
+                    target_h = self.video_container.winfo_height()
 
-                    cv2image = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-                    img = Image.fromarray(cv2image)
-                    imgtk = ImageTk.PhotoImage(image=img)
-                    
-                    self.video_label.imgtk = imgtk 
-                    self.video_label.configure(image=imgtk, text="")
-                
-        except Exception as e:
-            pass
+                    if target_w > 10 and target_h > 10:
+                        h, w = frame.shape[:2]
+                        # "Contain" logic: Ajustar para que entre completo
+                        scale = min(target_w/w, target_h/h)
+                        new_w, new_h = int(w * scale), int(h * scale)
+                        
+                        frame = cv2.resize(frame, (new_w, new_h))
+                        
+                        canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+                        y_off = (target_h - new_h) // 2
+                        x_off = (target_w - new_w) // 2
+                        canvas[y_off:y_off+new_h, x_off:x_off+new_w] = frame
+
+                        cv2image = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+                        img = Image.fromarray(cv2image)
+                        imgtk = ImageTk.PhotoImage(image=img)
+                        
+                        self.video_label.imgtk = imgtk 
+                        self.video_label.configure(image=imgtk, text="")
+            except Exception: pass
         
         self.root.after(15, self.update_video_frame)
 
-    # --- ACCIONES ---
-    def rotate_view(self):
-        # Incrementamos 0 -> 1 -> 2 -> 3 -> 0
-        self.rotation_index = (self.rotation_index + 1) % 4
-        # Feedback visual opcional en consola
-        print(f"Rotación actual: {self.rotation_index * 90}°")
+    # --- COMANDOS ---
+    def send_command(self, cmd):
+        if self.connected_client and self.loop:
+            asyncio.run_coroutine_threadsafe(self.connected_client.send(json.dumps(cmd)), self.loop)
 
     def toggle_flash(self):
         self.flash_on = not self.flash_on
-        self.btn_flash.config(text="Flash: ON" if self.flash_on else "Flash: OFF", bg="#388e3c" if self.flash_on else "#0288d1")
+        self.btn_flash.config(bg="#4caf50" if self.flash_on else "#0288d1")
         self.send_command({"type": "FLASH", "value": "on" if self.flash_on else "off"})
 
     def toggle_camera(self):
@@ -142,58 +194,57 @@ class WebcamControlApp:
 
     def toggle_video(self):
         self.video_active = not self.video_active
-        self.btn_video.config(text="Encender Cámara" if not self.video_active else "Apagar Cámara", bg="#388e3c" if not self.video_active else "#d32f2f")
+        self.btn_video.config(bg="#4caf50" if not self.video_active else "#d32f2f")
+        if not self.video_active:
+            self.video_label.configure(image="", text="🎙\nMODO MICRÓFONO", fg="#00ff00")
+        else:
+            self.video_label.configure(text="Iniciando video...")
         self.send_command({"type": "VIDEO_TOGGLE", "value": self.video_active})
 
     def toggle_mic(self):
         self.mic_active = not self.mic_active
-        self.btn_mic.config(text="Activar Mic" if not self.mic_active else "Mute Mic", bg="#388e3c" if not self.mic_active else "#d32f2f")
+        self.btn_mic.config(bg="#4caf50" if not self.mic_active else "#d32f2f")
         self.send_command({"type": "MIC_TOGGLE", "value": self.mic_active})
 
-    def send_zoom(self, value):
-        self.send_command({"type": "ZOOM", "value": float(value)})
-
-    # --- SERVIDOR ---
-    def send_command(self, command_dict):
-        if self.connected_client and self.loop:
-            try:
-                msg = json.dumps(command_dict)
-                asyncio.run_coroutine_threadsafe(self.connected_client.send(msg), self.loop)
-            except Exception: pass
+    def send_zoom(self, v): self.send_command({"type": "ZOOM", "value": float(v)})
+    def rotate_view(self): self.rotation_index = (self.rotation_index + 1) % 4
+    
+    def update_battery(self, val):
+        self.root.after(0, lambda: self.battery_label.config(text=f"Batería: {val}%", fg="#4caf50" if val > 20 else "red"))
 
     def start_server_thread(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
 
-        async def server_handler(websocket):
+        async def handler(websocket):
             self.connected_client = websocket
-            self.root.after(0, lambda: self.status_label.config(text=f"CONECTADO: {websocket.remote_address[0]}", fg="#4caf50"))
-            print(f"--> Nuevo cliente: {websocket.remote_address}")
-
+            self.root.after(0, lambda: self.status_label.config(text="● CONECTADO", fg="#4caf50"))
             try:
-                async for message in websocket:
-                    if isinstance(message, str) and len(message) > 1000:
+                async for msg in websocket:
+                    if len(msg) > 1000: 
                         try:
-                            clean_b64 = message.strip()
-                            img_bytes = base64.b64decode(clean_b64, validate=False)
-                            nparr = np.frombuffer(img_bytes, np.uint8)
-                            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                            if frame is not None:
-                                if not frame_queue.full():
+                            if self.video_active:
+                                dat = base64.b64decode(msg.strip(), validate=False)
+                                nparr = np.frombuffer(dat, np.uint8)
+                                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                                if frame is not None and not frame_queue.full():
                                     frame_queue.put(frame)
-                        except Exception: pass
-            except Exception: pass
+                        except: pass
+                    else: 
+                        try:
+                            d = json.loads(msg)
+                            if d.get('type') == 'BATTERY': self.update_battery(d['value'])
+                        except: pass
+            except: pass
             finally:
                 self.connected_client = None
-                self.root.after(0, lambda: self.status_label.config(text="Estado: ESPERANDO...", fg="orange"))
-                self.root.after(0, lambda: self.video_label.config(image="", text="[ SEÑAL PERDIDA ]"))
+                self.root.after(0, lambda: self.status_label.config(text="● DESCONECTADO", fg="red"))
+                self.root.after(0, lambda: self.battery_label.config(text="Batería: --%", fg="#888"))
 
         async def main():
-            print(f"Escuchando en puerto {PORT}...")
-            async with websockets.serve(server_handler, "0.0.0.0", PORT, max_size=None, ping_interval=None):
+            async with websockets.serve(handler, "0.0.0.0", PORT, max_size=None, ping_interval=None):
                 await asyncio.Future()
-
+        
         self.loop.run_until_complete(main())
 
 if __name__ == "__main__":
