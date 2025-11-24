@@ -29,10 +29,9 @@ def get_local_ip():
 class WebcamControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("WebcamPro")
+        self.root.title("AirwiLens - Server")
         
-        # 1. FORMATO VERTICAL (TIPO CELULAR)
-        # 550px ancho x 950px alto
+        # 1. FORMATO VERTICAL 
         self.root.geometry("400x600") 
         self.root.configure(bg="#121212")
 

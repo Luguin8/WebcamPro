@@ -129,7 +129,7 @@ export default function App() {
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View style={styles.container}>
           <StatusBar barStyle="light-content" />
-          <Text style={styles.title}>WebcamPro</Text>
+          <Text style={styles.title}>AirwiLens</Text>
           <Text style={styles.subtitle}>Convierte tu celular en una webcam HD</Text>
 
           <View style={styles.inputContainer}>
