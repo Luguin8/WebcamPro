@@ -104,7 +104,7 @@ class WebcamControlApp:
 
         async def main_server():
             print("Iniciando servidor en 0.0.0.0:5000...")
-            async with websockets.serve(self.handler, "0.0.0.0", 5000):
+            async with websockets.serve(self.handler, "0.0.0.0", 5000, max_size=None, ping_interval=None):
                 await asyncio.Future()
 
         try:
@@ -118,6 +118,9 @@ class WebcamControlApp:
         connected_client = websocket
         
         self.root.after(0, lambda: self.status_label.config(text=f"CONECTADO\n{websocket.remote_address}", fg="green"))
+        
+        cv2.namedWindow("WebcamPro Stream", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("WebcamPro Stream", 1280 , 720)
         
         try:
             async for message in websocket:
