@@ -12,6 +12,12 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.webcampro",
+      "permissions": [
+        "CAMERA",
+        "INTERNET"
+      ],
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -26,6 +32,13 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "$(PRODUCT_NAME) necesita acceso a la camara para transmitir video",
+          "enableMicrophonePermission": false
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",
