@@ -12,7 +12,9 @@ from PIL import Image, ImageTk
 import socket
 import webbrowser
 
+# --- CONFIGURACIÓN ---
 PORT = 5000
+# Cola de 1 solo espacio. Si llega uno nuevo, matamos al viejo.
 frame_queue = queue.Queue(maxsize=1)
 
 def get_local_ip():
@@ -42,8 +44,10 @@ class WebcamControlApp:
         self.local_ip = get_local_ip()
 
         self.create_interface()
+        
         self.server_thread = threading.Thread(target=self.start_server_thread, daemon=True)
         self.server_thread.start()
+
         self.update_video_frame()
 
     def create_interface(self):
@@ -66,6 +70,7 @@ class WebcamControlApp:
 
         self.video_container = tk.Frame(self.root, bg="black", bd=1, relief="solid")
         self.video_container.pack(side=tk.TOP, expand=True, fill="both", padx=10, pady=(0, 10))
+        
         self.video_label = tk.Label(self.video_container, text="[ ESPERANDO CONEXIÓN... ]", bg="black", fg="#333", font=("Segoe UI", 12))
         self.video_label.pack(expand=True, fill="both")
 
@@ -106,14 +111,13 @@ class WebcamControlApp:
     def update_video_frame(self):
         if not self.video_active:
             self.video_label.configure(image="", text="🎙\nMODO MICRÓFONO", fg="#4caf50", font=("Segoe UI", 16, "bold"))
-            # Vaciar cola si estamos en modo audio
             while not frame_queue.empty():
                 try: frame_queue.get_nowait()
                 except: pass
         else:
             try:
                 frame = None
-                # VACIADO AGRESIVO: Obtenemos el último frame y descartamos los viejos
+                # VACIADO TOTAL DEL BUFFER (Corrección de lag)
                 while not frame_queue.empty():
                     frame = frame_queue.get_nowait()
                 
@@ -183,16 +187,17 @@ class WebcamControlApp:
             self.connected_client = websocket
             self.root.after(0, lambda: self.status_label.config(text="● CONECTADO", fg="#4caf50"))
             try:
-                # Aumentamos ping_timeout para evitar desconexiones falsas si el video satura la red
                 async for msg in websocket:
                     if len(msg) > 1000: 
                         try:
                             if self.video_active:
-                                # CORRECCIÓN DE LAG: Si la cola está llena, sacamos el viejo
+                                # --- AQUI ESTABA EL ERROR, AHORA CORREGIDO ---
+                                # Si la cola está llena, SACAMOS el viejo a la fuerza
                                 if frame_queue.full():
                                     try: frame_queue.get_nowait()
                                     except: pass
                                 
+                                # Y metemos el nuevo (Siempre priorizamos lo nuevo)
                                 dat = base64.b64decode(msg.strip(), validate=False)
                                 nparr = np.frombuffer(dat, np.uint8)
                                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -211,7 +216,6 @@ class WebcamControlApp:
                 self.root.after(0, lambda: self.battery_label.config(text="Batería: --%", fg="#888"))
 
         async def main():
-            # Importante: ping_interval=None y max_size=None para estabilidad máxima
             async with websockets.serve(handler, "0.0.0.0", PORT, max_size=None, ping_interval=None):
                 await asyncio.Future()
         

@@ -22,7 +22,7 @@ export default function App() {
 
   const device = useCameraDevice(position);
   // 30 FPS es el estándar
-  const format = useCameraFormat(device, [{ videoResolution: { width: 1280, height: 720 } }, { fps: 30 }]);
+  const format = useCameraFormat(device, [{ videoResolution: { width: 1280, height: 720 } }, { fps: 24 }]);
 
   const ws = useRef<WebSocket | null>(null);
   const isSocketOpen = useSharedValue(false);
@@ -103,7 +103,7 @@ export default function App() {
     'worklet';
     if (!isSocketOpen.value) return;
 
-    runAtTargetFps(30, () => {
+    runAtTargetFps(24, () => {
       if (plugin && cameraActive) {
         // CORRECCIÓN DE VELOCIDAD:
         // Redujimos la calidad JPEG internamente en el plugin Kotlin a 85.
