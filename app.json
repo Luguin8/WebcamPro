@@ -9,13 +9,17 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "$(PRODUCT_NAME) necesita acceso a la camara para transmitir video"
+      }
     },
     "android": {
       "package": "com.webcampro",
       "permissions": [
         "CAMERA",
-        "INTERNET"
+        "INTERNET",
+        "android.permission.CAMERA"
       ],
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
@@ -56,6 +60,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6c48d7d1-70cf-40e5-8b32-84930f1c3fb7"
+      }
     }
   }
 }
