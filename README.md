@@ -1,50 +1,98 @@
-# Welcome to your Expo app 👋
+📸 AirwiLens
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Transforma tu Android en una Webcam de Alta Definición para PC vía Wi-Fi.
+Cero cables. Baja latencia. Control total.
 
-## Get started
+💡 ¿Qué es AirwiLens?
 
-1. Install dependencies
+AirwiLens es una solución de código abierto que convierte tu smartphone en una cámara web inalámbrica de alto rendimiento. A diferencia de otras apps, AirwiLens se enfoca en la transmisión de baja latencia utilizando procesamiento nativo (C++/Kotlin) en el dispositivo móvil y un servidor ligero en Python para la PC.
 
-   ```bash
-   npm install
-   ```
+✨ Características Principales
 
-2. Start the app
+🚀 High Performance: Procesamiento de imagen nativo usando JSI y Worklets (evitando el puente de JS).
 
-   ```bash
-   npx expo start
-   ```
+📡 100% Inalámbrico: Transmisión vía Wi-Fi (TCP/WebSockets) con reconexión automática.
 
-In the output, you'll find options to open the app in a
+🎛️ Centro de Control en PC: Panel de escritorio para controlar el celular remotamente:
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+Zoom Digital.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+Flash (Linterna).
 
-## Get a fresh project
+Giro de cámara (Frontal/Trasera).
 
-When you're ready, run:
+Rotación de vista (0°, 90°, 180°, 270°).
 
-```bash
-npm run reset-project
-```
+🔋 Modo Ahorro de Energía: "Modo Oscuro" real que apaga los píxeles de la pantalla del celular sin cortar la transmisión.
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+🎙️ Modo Solo Micrófono: Opción para transmitir solo audio y datos, ahorrando ancho de banda.
 
-## Learn more
+📊 Monitoreo en Tiempo Real: Visualización del estado de la batería del celular desde la PC.
 
-To learn more about developing your project with Expo, look at the following resources:
+🛠️ Stack Tecnológico
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+📱 Cliente Móvil (Android)
 
-## Join the community
+Framework: React Native (Expo Dev Client).
 
-Join our community of developers creating universal apps.
+Cámara: react-native-vision-camera (V4).
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Motor de Procesamiento: Plugin nativo personalizado escrito en Kotlin para compresión YUV -> JPEG en memoria RAM (Cero disco I/O).
+
+Multithreading: react-native-worklets-core para separar el hilo de UI del hilo de video.
+
+💻 Servidor PC (Windows)
+
+Lenguaje: Python 3.x.
+
+GUI: Tkinter (con diseño responsivo y manejo de hilos seguro).
+
+Red: websockets (Asyncio).
+
+Video: OpenCV (cv2) + Pillow para renderizado de alta velocidad.
+
+Arquitectura: Patrón Productor-Consumidor con colas (Queue) para desacoplar la recepción de red del renderizado de video y evitar "congelamientos".
+
+🚀 Instalación y Uso
+
+Prerrequisitos
+
+Node.js y NPM.
+
+Python 3.10 o superior.
+
+Un dispositivo Android conectado a la misma red Wi-Fi que la PC.
+
+1. Configurar el Servidor (PC)
+
+cd Python
+pip install -r requirements.txt  # (Asegúrate de tener opencv-python, websockets, pillow)
+python server_gui.py
+
+
+Verás tu dirección IP en la pantalla. Anótala.
+
+2. Configurar la App (Móvil)
+
+# Instalar dependencias
+npm install
+
+# Compilar la versión nativa (Necesario la primera vez)
+npx expo run:android
+
+
+Abre la App AirwiLens en tu celular.
+
+Ingresa la IP que muestra el servidor de Python.
+
+¡Disfruta!
+
+🤝 Contribuciones
+
+¡Las contribuciones son bienvenidas! Si tienes ideas para mejorar la latencia usando UDP o crear un driver virtual para Windows, abre un Issue o un Pull Request.
+
+📄 Licencia
+
+Este proyecto está bajo la Licencia MIT - siéntete libre de usarlo y modificarlo.
+
+Desarrollado con ❤️ por Martín Lugo
