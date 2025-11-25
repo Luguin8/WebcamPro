@@ -11,11 +11,16 @@ import queue
 from PIL import Image, ImageTk
 import socket
 import webbrowser
+import pyvirtualcam # <--- NUEVA IMPORTACIÓN
 
 # --- CONFIGURACIÓN ---
 PORT = 5000
-# Cola de 1 solo espacio. Si llega uno nuevo, matamos al viejo.
 frame_queue = queue.Queue(maxsize=1)
+
+# Configuración de la Cámara Virtual (Debe coincidir con lo que envía el celular)
+VCAM_WIDTH = 1280
+VCAM_HEIGHT = 720
+VCAM_FPS = 30 # Aunque el celular mande 24, al driver le decimos 30 para mayor compatibilidad
 
 def get_local_ip():
     try:
@@ -42,12 +47,18 @@ class WebcamControlApp:
         self.connected_client = None
         self.loop = None
         self.local_ip = get_local_ip()
+        
+        # INICIALIZAR CÁMARA VIRTUAL
+        try:
+            self.vcam = pyvirtualcam.Camera(width=VCAM_WIDTH, height=VCAM_HEIGHT, fps=VCAM_FPS, fmt=pyvirtualcam.PixelFormat.BGR)
+            print(f"--> Cámara Virtual Iniciada: {self.vcam.device}")
+        except Exception as e:
+            print(f"Error iniciando cámara virtual (¿Tienes OBS instalado?): {e}")
+            self.vcam = None
 
         self.create_interface()
-        
         self.server_thread = threading.Thread(target=self.start_server_thread, daemon=True)
         self.server_thread.start()
-
         self.update_video_frame()
 
     def create_interface(self):
@@ -111,21 +122,48 @@ class WebcamControlApp:
     def update_video_frame(self):
         if not self.video_active:
             self.video_label.configure(image="", text="🎙\nMODO MICRÓFONO", fg="#4caf50", font=("Segoe UI", 16, "bold"))
+            
+            # Si estamos en modo mic, enviamos pantalla negra a la cámara virtual
+            if self.vcam:
+                blank_frame = np.zeros((VCAM_HEIGHT, VCAM_WIDTH, 3), np.uint8)
+                self.vcam.send(blank_frame)
+                
             while not frame_queue.empty():
                 try: frame_queue.get_nowait()
                 except: pass
         else:
             try:
                 frame = None
-                # VACIADO TOTAL DEL BUFFER (Corrección de lag)
                 while not frame_queue.empty():
                     frame = frame_queue.get_nowait()
                 
                 if frame is not None:
+                    # Rotaciones
                     if self.rotation_index == 1: frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
                     elif self.rotation_index == 2: frame = cv2.rotate(frame, cv2.ROTATE_180)
                     elif self.rotation_index == 3: frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
                     
+                    # --- 1. ENVIAR A CÁMARA VIRTUAL (AQUI OCURRE LA MAGIA) ---
+                    if self.vcam:
+                        # Redimensionamos al tamaño exacto que espera el driver (1280x720)
+                        # Si la imagen viene girada (vertical), la ajustamos con bordes negros (Letterboxing)
+                        # para no deformarla en Zoom/Meet.
+                        vcam_frame = np.zeros((VCAM_HEIGHT, VCAM_WIDTH, 3), np.uint8)
+                        h, w = frame.shape[:2]
+                        
+                        # Escalar manteniendo aspect ratio
+                        scale = min(VCAM_WIDTH/w, VCAM_HEIGHT/h)
+                        nw, nh = int(w * scale), int(h * scale)
+                        resized = cv2.resize(frame, (nw, nh))
+                        
+                        # Centrar
+                        y_off = (VCAM_HEIGHT - nh) // 2
+                        x_off = (VCAM_WIDTH - nw) // 2
+                        vcam_frame[y_off:y_off+nh, x_off:x_off+nw] = resized
+                        
+                        self.vcam.send(vcam_frame)
+
+                    # --- 2. MOSTRAR EN GUI (Igual que antes) ---
                     target_w = self.video_container.winfo_width()
                     target_h = self.video_container.winfo_height()
 
@@ -133,12 +171,12 @@ class WebcamControlApp:
                         h, w = frame.shape[:2]
                         scale = min(target_w/w, target_h/h)
                         new_w, new_h = int(w * scale), int(h * scale)
-                        frame = cv2.resize(frame, (new_w, new_h))
+                        frame_gui = cv2.resize(frame, (new_w, new_h))
                         
                         canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
                         y_off = (target_h - new_h) // 2
                         x_off = (target_w - new_w) // 2
-                        canvas[y_off:y_off+new_h, x_off:x_off+new_w] = frame
+                        canvas[y_off:y_off+new_h, x_off:x_off+new_w] = frame_gui
 
                         cv2image = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
                         img = Image.fromarray(cv2image)
@@ -146,7 +184,9 @@ class WebcamControlApp:
                         
                         self.video_label.imgtk = imgtk 
                         self.video_label.configure(image=imgtk, text="")
-            except Exception: pass
+            except Exception as e: 
+                pass
+                
         self.root.after(15, self.update_video_frame)
 
     def send_command(self, cmd):
@@ -191,13 +231,10 @@ class WebcamControlApp:
                     if len(msg) > 1000: 
                         try:
                             if self.video_active:
-                                # --- AQUI ESTABA EL ERROR, AHORA CORREGIDO ---
-                                # Si la cola está llena, SACAMOS el viejo a la fuerza
                                 if frame_queue.full():
                                     try: frame_queue.get_nowait()
                                     except: pass
                                 
-                                # Y metemos el nuevo (Siempre priorizamos lo nuevo)
                                 dat = base64.b64decode(msg.strip(), validate=False)
                                 nparr = np.frombuffer(dat, np.uint8)
                                 frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
